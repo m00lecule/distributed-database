@@ -12,10 +12,12 @@ import scala.concurrent.duration._
 
 object PATH{
   val path = System.getProperty("user.dir");
+  val dir = "/actorDirs/"
 }
 
 object DatabaseNode {
   def props(actor: ActorRef) = Props(new DatabaseNode(actor))
+
   //tell the actor that he is master now -> use only once, while creating new ActorSystem
   case object InitMaster
 
@@ -42,8 +44,9 @@ class DatabaseNode(var masterReference: ActorRef) extends Actor with ActorLoggin
   import DatabaseNode._
 
   val name: String = self.path.name
-  val src: String = PATH.path +"/actorDirs/"+ name
+  val src: String = PATH.path + PATH.dir + name
   var logging_message: String = ""
+  var processing_message: Boolean = false
 
   override def preStart = {
     new File(src).mkdir()
@@ -67,6 +70,9 @@ class DatabaseNode(var masterReference: ActorRef) extends Actor with ActorLoggin
         masterReference = self
       }
       case MakeLog => makeLog
+
+      case WhoIsMaster => sender ! TellWhoIsMaster(masterReference)
+
       case UpdateFile(content: String) =>{
         log.info("Commiting changes to file")
         copy(content)
@@ -80,12 +86,15 @@ class DatabaseNode(var masterReference: ActorRef) extends Actor with ActorLoggin
         }else{
           masterReference = ref
           log.info(ref.path.name+ " became new master")
+          if(processing_message)
+            self ! SendUpdate
         }
       }
       case GetMasterReference =>{
         if(masterReference == self){
           log.info("giving crown to " + sender.path.name)
           context.system.actorSelection("/user/*") ! TellWhoIsMaster(sender)
+
         }else{
           log.info(sender.path.name + " asked wrong actor for crown")
           sender ! TellWhoIsMaster(masterReference)
@@ -96,9 +105,11 @@ class DatabaseNode(var masterReference: ActorRef) extends Actor with ActorLoggin
           log.info("Requesting to commit changes")
           context.system.actorSelection("/user/*") ! UpdateFile(logging_message)
           logging_message = ""
+          processing_message = false
         }else{
           log.info("Asking " + masterReference.path.name +" for crown")
           masterReference ! GetMasterReference
+          processing_message = true
         }
       }
   }
@@ -108,7 +119,7 @@ class DatabaseNode(var masterReference: ActorRef) extends Actor with ActorLoggin
 object AkkaQuickstart extends App {
   import DatabaseNode._
 
-  val system: ActorSystem = ActorSystem("helloAkka")
+  val system: ActorSystem = ActorSystem("database")
 
   import system.dispatcher
 
@@ -120,24 +131,26 @@ object AkkaQuickstart extends App {
   val actor: ActorRef =
     system.actorOf(DatabaseNode.props(null), "actor")
 
+
   val actor1: ActorRef =
     system.actorOf(DatabaseNode.props(actor), "actor1")
+
+  val actor2: ActorRef =
+    system.actorOf(DatabaseNode.props(actor1), "actor2")
+
+  val actor3: ActorRef =
+    system.actorOf(DatabaseNode.props(actor), "actor3")
+
 
   actor ! InitMaster
 
   Thread.sleep(2000)
 
-  actor1 ! SendUpdate
+  actor2 ! SendUpdate
 
   Thread.sleep(2000)
 
-  actor ! SendUpdate
-
-  Thread.sleep(2000)
-
-
   actor1 ! SendUpdate
-
 
   StdIn.readLine()
 
